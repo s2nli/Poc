@@ -465,6 +465,26 @@ function readBatchCache() {
   } catch (e) { return null; }
 }
 
+const IDB_NAME = "cx-batches-db", IDB_STORE = "kv";
+function idbOpen() {
+  return new Promise((res, rej) => {
+    try {
+      const rq = indexedDB.open(IDB_NAME, 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore(IDB_STORE);
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => rej(rq.error);
+    } catch (e) { rej(e); }
+  });
+}
+async function idbGet(key) {
+  try { const db = await idbOpen(); return await new Promise((res) => { const r = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); }
+  catch (e) { return null; }
+}
+async function idbSet(key, val) {
+  try { const db = await idbOpen(); await new Promise((res) => { const tx = db.transaction(IDB_STORE, "readwrite"); tx.objectStore(IDB_STORE).put(val, key); tx.oncomplete = res; tx.onerror = res; }); }
+  catch (e) {}
+}
+
 function restoreScroll() {
   try {
     const y = Number(sessionStorage.getItem("cx-scroll") || 0);
@@ -474,8 +494,9 @@ function restoreScroll() {
 }
 
 async function loadBatches() {
-  const cached = readBatchCache();
-  let usedCache = false;
+  let cached = readBatchCache();
+  if (!cached) { const l = await idbGet("all"); cached = Array.isArray(l) && l.length ? l : null; }
+  let usedCache = false, firstShown = false;
   try {
     const grid = $("#batchGrid");
     if (cached) {
@@ -492,13 +513,16 @@ async function loadBatches() {
     let data;
     try {
       data = await window.PWSource.loadBatches((partial, more) => {
-        // show batches as soon as the first page arrives, keep adding in the background
         if (!partial.length) return;
-        allBatches = partial;
-        try { updateStats(); renderBatches(); } catch (e) {}
-        $("#globalPreloader").classList.add("hidden");
         const n = $("#dataUpdatedNote");
-        if (n && more) n.textContent = "· loading all courses… " + partial.length;
+        if (!usedCache && !firstShown) {
+          // first ever visit: show page 1 right away, then stay quiet (no repeated re-render)
+          firstShown = true;
+          allBatches = partial;
+          try { updateStats(); renderBatches(); } catch (e) {}
+          $("#globalPreloader").classList.add("hidden");
+        }
+        if (n && more) n.textContent = "· loading all courses… " + partial.length.toLocaleString();
       });
     }
     catch (pwError) {
@@ -508,10 +532,11 @@ async function loadBatches() {
       data = await response.json();
     }
     const fresh = Array.isArray(data.batches) ? data.batches : [];
-    const changed = JSON.stringify(fresh) !== JSON.stringify(allBatches);
+    const changed = fresh.length !== allBatches.length || (fresh[0] && allBatches[0] && fresh[0]._id !== allBatches[0]._id);
     allBatches = fresh;
+    if (fresh.length) idbSet("all", fresh);
     try { sessionStorage.setItem(BATCH_CACHE_KEY, JSON.stringify(fresh)); sessionStorage.setItem("cx-loaded", "1"); } catch (e) {}
-    if (changed || !usedCache) { updateStats(); renderBatches(); }
+    if (changed || !usedCache) { const y = window.scrollY; updateStats(); renderBatches(); if (usedCache) window.scrollTo(0, y); }
     const updatedNote = $("#dataUpdatedNote");
     if (updatedNote) updatedNote.textContent = `· library refreshed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   } catch (error) {

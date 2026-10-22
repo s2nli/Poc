@@ -490,7 +490,17 @@ async function loadBatches() {
       grid.innerHTML = Array.from({ length: 8 }, () => '<div class="skeleton-card"><div class="skeleton-thumb"></div><div class="skeleton-body"><div class="skeleton-line" style="width:88%"></div><div class="skeleton-line" style="width:60%"></div><div class="skeleton-line" style="width:40%"></div></div></div>').join("");
     }
     let data;
-    try { data = await window.PWSource.loadBatches(); }
+    try {
+      data = await window.PWSource.loadBatches((partial, more) => {
+        // show batches as soon as the first page arrives, keep adding in the background
+        if (!partial.length) return;
+        allBatches = partial;
+        try { updateStats(); renderBatches(); } catch (e) {}
+        $("#globalPreloader").classList.add("hidden");
+        const n = $("#dataUpdatedNote");
+        if (n && more) n.textContent = "· loading all courses… " + partial.length;
+      });
+    }
     catch (pwError) {
       console.error(pwError);
       const response = await fetch("batches.json", { cache: "no-store" });

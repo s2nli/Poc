@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PW debug</title>
+<style>body{font:14px system-ui;background:#0b0d12;color:#e8ebf3;margin:0;padding:14px}h1{font-size:18px}button{padding:10px 14px;border-radius:10px;border:0;background:#8b7cff;color:#fff;font-weight:600;margin:6px 6px 6px 0}pre{white-space:pre-wrap;word-break:break-all;background:#151b27;padding:10px;border-radius:10px;max-height:260px;overflow:auto;font-size:12px}h3{margin:14px 0 4px;font-size:14px;color:#a69cff}input{padding:9px;border-radius:8px;border:1px solid #333;background:#151b27;color:#fff;width:100%;box-sizing:border-box}</style></head>
+<body><h1>PW API debug</h1>
+<p>Batch id:</p><input id="bid" placeholder="batch id (24 chars)">
+<button id="run">Run checks</button><button id="copy">Copy all</button>
+<div id="out"></div>
+<script src="pw-source.js"></script>
+<script>
+(function(){
+  const out=document.getElementById("out"), q=new URLSearchParams(location.search);
+  document.getElementById("bid").value=q.get("id")||"";
+  let log="";
+  function show(title,data){ const t=typeof data==="string"?data:JSON.stringify(data,null,1); const s=t.length>2500?t.slice(0,2500)+"\n…(cut)":t; log+="\n### "+title+"\n"+s+"\n";
+    out.insertAdjacentHTML("beforeend","<h3>"+title.replace(/</g,"&lt;")+"</h3><pre>"+s.replace(/</g,"&lt;")+"</pre>"); }
+  async function raw(path){ try{ const r=await fetch(path,{cache:"no-store",credentials:"include"}); const t=await r.text(); let j; try{j=JSON.parse(t)}catch(e){j=t.slice(0,600)} show(path+"  [HTTP "+r.status+"]",j); return j; }catch(e){ show(path,"ERROR "+e.message); } }
+  document.getElementById("run").onclick=async()=>{
+    out.innerHTML=""; log="";
+    let id=document.getElementById("bid").value.trim();
+    const all=await raw("/api/AllBatches?page=1");
+    if(!id){ const l=(all&&(all.batches||all.data))||[]; if(l[0]) id=l[0]._id||l[0].batchId||l[0].id; document.getElementById("bid").value=id||""; }
+    if(!id) return;
+    const bi=await raw("/api/BatchInfo?BatchId="+id+"&Type=details");
+    let subs=[]; try{ subs=(bi.subjects||(bi.data&&bi.data.subjects)||(bi.data&&bi.data.data&&bi.data.data.subjects)||[]);}catch(e){}
+    const s=subs[0]; if(!s){ show("No subjects found in BatchInfo","see response above"); return; }
+    const slug=s.slug, sid=(s.subjectId&&s.subjectId._id)||s.subjectId;
+    const si=await raw("/api/SubjectInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(slug)+"&page=1");
+    let tl=[]; try{ tl=Array.isArray(si)?si:(si.data&&Array.isArray(si.data)?si.data:(si.topics||(si.data&&si.data.topics)||[])); }catch(e){}
+    const t=tl[0]; if(!t){ await raw("/api/SubjectInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(sid)+"&page=1"); return; }
+    const tid=t.slug||t._id;
+    await raw("/api/TopicInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(slug)+"&TopicId="+encodeURIComponent(tid)+"&ContentType=videos&page=1");
+    await raw("/api/TopicInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(slug)+"&TopicId="+encodeURIComponent(tid)+"&ContentType=notes&page=1");
+  };
+  document.getElementById("copy").onclick=()=>{ navigator.clipboard.writeText(log).then(()=>alert("Copied")).catch(()=>alert("Copy failed")); };
+})();
+</script></body></html>

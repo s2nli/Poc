@@ -70,7 +70,7 @@ function openBatch(batch) {
   try { window.CXProfile && window.CXProfile.trackBatch(batch); } catch (e) {}
   renderRecentlyWatched();
   try { sessionStorage.setItem("cx-scroll", String(Math.round(window.scrollY))); } catch (e) {}
-  window.location.href = `batch.html?id=${encodeURIComponent(id)}`;
+  window.location.href = `/study/batches/${encodeURIComponent(id)}`;
 }
 
 function getRecentlyViewed() {
@@ -130,7 +130,7 @@ function openRecentLecture(item) {
     try { window.CXProfile && window.CXProfile.trackBatch(full); } catch (e) {}
   }
   try { sessionStorage.setItem("cx-scroll", String(Math.round(window.scrollY))); } catch (e) {}
-  window.location.href = `batch.html?id=${encodeURIComponent(item.b)}#lec=${encodeURIComponent(item.i)}`;
+  window.location.href = `/study/batches/${encodeURIComponent(item.b)}`;
 }
 
 function renderRecentlyWatched() {

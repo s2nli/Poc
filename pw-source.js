@@ -63,12 +63,26 @@
     };
   }
   async function loadBatches() {
+    // No page cap: read totalPages from page 1, then fetch every remaining page (8 at a time).
+    // If the API gives no totalPages, keep going until a page comes back empty.
     const first = await get(API + "/AllBatches?page=1");
     let list = arr(first, ["batches"]);
-    const total = Math.min(num(first.totalPages || (first.data && first.data.totalPages)) || 1, 40);
-    const rest = [];
-    for (let p = 2; p <= total; p++) rest.push(get(API + "/AllBatches?page=" + p).then((r) => arr(r, ["batches"])).catch(() => []));
-    (await Promise.all(rest)).forEach((a) => { list = list.concat(a); });
+    const tp = num(first.totalPages || (first.data && first.data.totalPages) || (first.pagination && first.pagination.totalPages));
+    const HARD_MAX = 2000;
+    const fetchPage = (p) => get(API + "/AllBatches?page=" + p).then((r) => arr(r, ["batches"])).catch(() => get(API + "/AllBatches?page=" + p).then((r) => arr(r, ["batches"])).catch(() => []));
+    if (tp > 1) {
+      const pages = [];
+      for (let p = 2; p <= Math.min(tp, HARD_MAX); p++) pages.push(p);
+      for (let i = 0; i < pages.length; i += 8) {
+        (await Promise.all(pages.slice(i, i + 8).map(fetchPage))).forEach((a) => { list = list.concat(a); });
+      }
+    } else if (list.length) {
+      for (let p = 2; p <= HARD_MAX; p++) {
+        const a = await fetchPage(p);
+        if (!a.length) break;
+        list = list.concat(a);
+      }
+    }
     const seen = new Set(), out = [];
     list.map(normBatch).forEach((b) => { if (b._id && !seen.has(b._id)) { seen.add(b._id); out.push(b); } });
     return { success: true, batches: out };

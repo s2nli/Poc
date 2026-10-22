@@ -1,4 +1,4 @@
-const CACHE_NAME = "codex-studys-shell-v15";
+const CACHE_NAME = "codex-studys-shell-v16";
 const SHELL_FILES = ["./index.html", "./app.js", "./profile.js", "./batch.html", "./batch.js", "./batch.css", "./pw-source.js", "./manifest.json", "./assets/icon-192.png", "./assets/icon-512.png", "./assets/mj-icon-192.png", "./assets/mj-icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -21,7 +21,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
   // live PW traffic (API, learnxpw player pages and their Next.js assets/RSC calls) always goes straight to the network
-  if (url.pathname.startsWith("/api/") || url.pathname === "/watch" || url.pathname.startsWith("/study/") || url.searchParams.has("_rsc")) return;
+  if (url.pathname.startsWith("/api/") || url.pathname === "/watch" || url.pathname.startsWith("/practice-v2/") || url.pathname.startsWith("/_next/") || url.pathname.startsWith("/study/") || url.searchParams.has("_rsc")) return;
 
   // Network-first for page navigations so UI/logic updates (like the popups) land on the very next visit.
   if (event.request.mode === "navigate") {

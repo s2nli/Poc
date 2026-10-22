@@ -1,8 +1,11 @@
 {
   "rewrites": [
+    { "source": "/study/:path*", "destination": "https://www.learnxpw.site/study/:path*" },
     { "source": "/watch", "destination": "https://www.learnxpw.site/watch" },
+    { "source": "/practice-v2/:path*", "destination": "https://www.learnxpw.site/practice-v2/:path*" },
     { "source": "/_next/:path*", "destination": "https://www.learnxpw.site/_next/:path*" },
     { "source": "/assets/img/:path*", "destination": "https://www.learnxpw.site/assets/img/:path*" },
-    { "source": "/study/:path*", "destination": "https://www.learnxpw.site/study/:path*" }
+    { "source": "/assets/:path*", "destination": "https://www.learnxpw.site/assets/:path*" },
+    { "source": "/images/:path*", "destination": "https://www.learnxpw.site/images/:path*" }
   ]
 }

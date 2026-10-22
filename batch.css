@@ -179,3 +179,8 @@ svg { display: block; }
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 200; padding: 12px 18px; border-radius: 999px; background: var(--panel-solid); border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: 14px; opacity: 0; pointer-events: none; transition: .25s; }
 .toast.show { opacity: 1; }
 @media (min-width: 700px) { .hero-title { font-size: 30px; } }
+
+/* batch tabs: single scrollable row (Tests / All Classes / Live / Announcement, chapter sub-tabs) */
+.tabs { display: flex !important; gap: 10px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs .tab { flex: 0 0 auto; padding-left: 16px; padding-right: 16px; }

@@ -62,32 +62,49 @@
       subBatches: []
     };
   }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function pageTry(p) {
+    // returns an array (maybe empty = genuinely empty page) or null when every attempt failed
+    for (let i = 0; i < 4; i++) {
+      try { return arr(await get(API + "/AllBatches?page=" + p), ["batches"]); }
+      catch (e) { await sleep(300 * (i + 1)); }
+    }
+    return null;
+  }
   async function loadBatches(onProgress) {
-    // No page cap: read totalPages from page 1, then fetch every remaining page (8 at a time).
-    // If the API gives no totalPages, keep going until a page comes back empty.
     const dedupe = (l) => { const seen = new Set(), out = []; l.map(normBatch).forEach((b) => { if (b._id && !seen.has(b._id)) { seen.add(b._id); out.push(b); } }); return out; };
     const first = await get(API + "/AllBatches?page=1");
     let list = arr(first, ["batches"]);
-    if (onProgress) { try { onProgress(dedupe(list), false); } catch (e) {} }
-    const tp = num(first.totalPages || (first.data && first.data.totalPages) || (first.pagination && first.pagination.totalPages));
-    const HARD_MAX = 2000;
-    const fetchPage = (p) => get(API + "/AllBatches?page=" + p).then((r) => arr(r, ["batches"])).catch(() => get(API + "/AllBatches?page=" + p).then((r) => arr(r, ["batches"])).catch(() => []));
+    if (onProgress) { try { onProgress(dedupe(list), true); } catch (e) {} }
+    const meta = Object.assign({}, first && first.data && !Array.isArray(first.data) ? first.data : {}, first || {});
+    let tp = num(meta.totalPages || meta.total_pages || (meta.pagination && meta.pagination.totalPages));
+    const totalItems = num(meta.total || meta.totalCount || meta.totalBatches || meta.count || (meta.pagination && meta.pagination.total));
+    if (!tp && totalItems && list.length) tp = Math.ceil(totalItems / list.length);
+    const HARD_MAX = 3000;
+    let failed = [];
     if (tp > 1) {
       const pages = [];
       for (let p = 2; p <= Math.min(tp, HARD_MAX); p++) pages.push(p);
-      for (let i = 0; i < pages.length; i += 8) {
-        (await Promise.all(pages.slice(i, i + 8).map(fetchPage))).forEach((a) => { list = list.concat(a); });
-        if (onProgress) { try { onProgress(dedupe(list), i + 8 < pages.length); } catch (e) {} }
+      for (let i = 0; i < pages.length; i += 6) {
+        const chunk = pages.slice(i, i + 6);
+        const res = await Promise.all(chunk.map(pageTry));
+        res.forEach((a, k) => { if (a === null) failed.push(chunk[k]); else list = list.concat(a); });
+        if (onProgress) { try { onProgress(dedupe(list), i + 6 < pages.length); } catch (e) {} }
       }
     } else if (list.length) {
+      // no page count in the response: walk pages until one comes back genuinely empty
       for (let p = 2; p <= HARD_MAX; p++) {
-        const a = await fetchPage(p);
+        const a = await pageTry(p);
+        if (a === null) { failed.push(p); if (failed.length > 3) break; continue; }
         if (!a.length) break;
         list = list.concat(a);
-        if (onProgress && p % 8 === 0) { try { onProgress(dedupe(list), true); } catch (e) {} }
+        if (onProgress && p % 6 === 0) { try { onProgress(dedupe(list), true); } catch (e) {} }
       }
     }
-    return { success: true, batches: dedupe(list) };
+    // second chance for pages that failed
+    const still = [];
+    for (const p of failed) { await sleep(500); const a = await pageTry(p); if (a === null) still.push(p); else list = list.concat(a); }
+    return { success: true, batches: dedupe(list), complete: still.length === 0 };
   }
 
   /* ---------- batch -> subjects ---------- */
@@ -189,25 +206,81 @@
     });
     return out;
   }
+  const KIND = {
+    lectures: { types: ["videos", "video", "lectures"], notes: false },
+    notes: { types: ["notes", "pdf", "pdfs"], notes: true },
+    dpppdf: { types: ["DppNotes", "dppNotes", "dpp-notes", "DPPNotes"], notes: true },
+    dppvid: { types: ["DppVideos", "dppVideos", "dpp-videos", "DPPVideos"], notes: false }
+  };
   async function getItems(batchId, subject, topic, kind) {
-    const k = kind === "notes" ? "notes" : "videos";
+    const k = KIND[kind] ? kind : kind === "videos" ? "lectures" : "lectures";
+    const cfg = KIND[k];
     topic._items = topic._items || {};
     if (topic._items[k]) return topic._items[k];
     await getChapters(batchId, subject);
-    const types = k === "notes" ? ["notes", "pdf", "pdfs"] : ["videos", "video", "lectures"];
     const tids = [topic.slug, topic.id].filter(Boolean);
     let lastErr = null, result = [];
     outer: for (const tid of tids) {
-      for (const ct of types) {
+      for (const ct of cfg.types) {
         try {
           const list = await pagedList((p) => API + "/TopicInfo?BatchId=" + enc(batchId) + "&SubjectId=" + enc(subject.sid || subject.slug) + "&TopicId=" + enc(tid) + "&ContentType=" + enc(ct) + "&page=" + p, ["items", "videos", "notes"]);
-          if (list.length) { result = k === "notes" ? [].concat(...list.map(normNotes)) : list.map(normVideo); break outer; }
+          if (list.length) { result = cfg.notes ? [].concat(...list.map(normNotes)) : list.map(normVideo); break outer; }
         } catch (e) { lastErr = e; }
       }
     }
-    if (!result.length && lastErr) throw lastErr;
+    if (!result.length && lastErr && !(k === "dpppdf" || k === "dppvid")) throw lastErr;
     topic._items[k] = result;
     return result;
+  }
+
+  /* ---------- DPPs (quizzes), tests, announcements, live ---------- */
+  const nm = (x) => str(x && (x.name || x.title || x.topic || x.testName || x.exam && x.exam.name)) || "Untitled";
+  async function getDpps(batchId, subject, topic) {
+    const out = [], seen = new Set();
+    for (let p = 1; p <= 20; p++) {
+      const q = new URLSearchParams({ batchId, batchSubjectId: subject.batchSubjectId, chapterId: topic.id, page: String(p), limit: "20" });
+      const r = await get(API + "/dpp-list?" + q.toString());
+      const a = arr(r, ["dpps", "list", "items", "data"]);
+      let added = 0;
+      a.forEach((x) => { const k = str(x && (x._id || x.id)) || JSON.stringify(x).slice(0, 60); if (!seen.has(k)) { seen.add(k); out.push(x); added++; } });
+      if (!a.length || !added || a.length < 20) break;
+    }
+    return out.map((x) => ({ id: str(x._id || x.id || x.testId), title: nm(x), sub: [str(x.totalQuestions || x.questions || x.noOfQuestions) && (str(x.totalQuestions || x.questions || x.noOfQuestions) + " Questions"), fmtDate(x.date || x.startTime || x.createdAt)].filter(Boolean).join(" • "), raw: x }));
+  }
+  async function getTests(batchId) {
+    let lastErr = null, best = [];
+    for (const t of ["tests", "test", "test-series", "testSeries", "Tests"]) {
+      try {
+        const r = await get(API + "/BatchInfo?BatchId=" + enc(batchId) + "&Type=" + enc(t));
+        const a = arr(r, ["tests", "testSeries", "data"]);
+        if (a.length) { best = a; break; }
+      } catch (e) { lastErr = e; }
+    }
+    if (!best.length && lastErr) throw lastErr;
+    return best.map((x) => ({ id: str(x._id || x.id || x.testId), title: nm(x), sub: [str(x.totalQuestions || x.noOfQuestions) && (str(x.totalQuestions || x.noOfQuestions) + " Questions"), fmtDate(x.startTime || x.date || x.createdAt)].filter(Boolean).join(" • ") }));
+  }
+  function testUrl(batchId, id) {
+    return "/practice-v2/test/" + enc(id) + "?type=Start&source=BATCH_TEST_SERIES&mode=Online&startTime=" + Date.now() + "&lang=en&batchId=" + enc(batchId) + "&testSource=BATCH_TEST_SERIES";
+  }
+  async function getAnnouncements(batchId) {
+    const out = [], seen = new Set();
+    for (let p = 1; p <= 10; p++) {
+      const r = await get(API + "/BatchInfo?BatchId=" + enc(batchId) + "&Type=announcement&page=" + p);
+      const a = arr(r, ["announcements", "data"]);
+      let added = 0;
+      a.forEach((x) => { const k = str(x && (x._id || x.id)) || JSON.stringify(x).slice(0, 60); if (!seen.has(k)) { seen.add(k); out.push(x); added++; } });
+      if (!a.length || !added) break;
+    }
+    return out.map((x) => ({ title: strip(x.title || x.heading || x.announcement || x.text || x.message || x.description), body: strip(x.description || x.message || x.body || ""), date: fmtDate(x.createdAt || x.date || x.updatedAt), img: img(x.image || x.imageUrl || x.attachment) }));
+  }
+  async function getLive(batchId) {
+    const r = await fetch(API + "/todays-schedule", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ batchId }) });
+    if (!r.ok) throw new Error("todays-schedule -> HTTP " + r.status);
+    const a = arr(await r.json(), ["schedules", "classes", "data"]);
+    return a.map((x) => {
+      const vd = x.videoDetails || {};
+      return { id: str(x._id || x.id), title: str(x.topic || x.title || x.name || vd.name) || "Class", type: str(x.urlType || x.type) || "penpencilvdo", url: str(x.url || vd.videoUrl), date: str(x.startTime || x.date || x.createdAt), dur: fmtDur(vd.duration || x.duration), free: x.isFree === true, subjectSlug: str(x.subjectSlug || (x.subjectId && x.subjectId.slug)), topicSlug: str(x.topicSlug || (x.chapterId && x.chapterId.slug)), live: x.isLive === true || /live/i.test(str(x.status)) };
+    });
   }
 
   /* ---------- notes (pdf) ---------- */
@@ -237,5 +310,5 @@
     return "/watch?" + q.toString();
   }
 
-  window.PWSource = { get, loadBatches, getBatch, getChapters, getItems, resolveNote, watchUrl, fmtDur, fmtDate, API };
+  window.PWSource = { get, loadBatches, getBatch, getChapters, getItems, getDpps, getTests, testUrl, getAnnouncements, getLive, resolveNote, watchUrl, fmtDur, fmtDate, API };
 })();

@@ -70,7 +70,7 @@ function openBatch(batch) {
   try { window.CXProfile && window.CXProfile.trackBatch(batch); } catch (e) {}
   renderRecentlyWatched();
   try { sessionStorage.setItem("cx-scroll", String(Math.round(window.scrollY))); } catch (e) {}
-  window.location.href = `/study/batches/${encodeURIComponent(id)}`;
+  window.location.href = `batch.html?id=${encodeURIComponent(id)}`;
 }
 
 function getRecentlyViewed() {
@@ -130,7 +130,7 @@ function openRecentLecture(item) {
     try { window.CXProfile && window.CXProfile.trackBatch(full); } catch (e) {}
   }
   try { sessionStorage.setItem("cx-scroll", String(Math.round(window.scrollY))); } catch (e) {}
-  window.location.href = `/study/batches/${encodeURIComponent(item.b)}`;
+  window.location.href = `batch.html?id=${encodeURIComponent(item.b)}`;
 }
 
 function renderRecentlyWatched() {
@@ -455,7 +455,7 @@ function showToast(message) {
   window.setTimeout(() => toast.remove(), 2800);
 }
 
-const BATCH_CACHE_KEY = "cx-batches-cache-v1";
+const BATCH_CACHE_KEY = "cx-batches-cache-v2";
 
 function readBatchCache() {
   try {
@@ -495,7 +495,7 @@ function restoreScroll() {
 
 async function loadBatches() {
   let cached = readBatchCache();
-  if (!cached) { const l = await idbGet("all"); cached = Array.isArray(l) && l.length ? l : null; }
+  if (!cached) { const l = await idbGet("all-v2"); cached = Array.isArray(l) && l.length ? l : null; }
   let usedCache = false, firstShown = false;
   try {
     const grid = $("#batchGrid");
@@ -534,8 +534,8 @@ async function loadBatches() {
     const fresh = Array.isArray(data.batches) ? data.batches : [];
     const changed = fresh.length !== allBatches.length || (fresh[0] && allBatches[0] && fresh[0]._id !== allBatches[0]._id);
     allBatches = fresh;
-    if (fresh.length) idbSet("all", fresh);
-    try { sessionStorage.setItem(BATCH_CACHE_KEY, JSON.stringify(fresh)); sessionStorage.setItem("cx-loaded", "1"); } catch (e) {}
+    if (fresh.length && data.complete !== false) idbSet("all-v2", fresh);
+    if (data.complete !== false) { try { sessionStorage.setItem(BATCH_CACHE_KEY, JSON.stringify(fresh)); sessionStorage.setItem("cx-loaded", "1"); } catch (e) {} }
     if (changed || !usedCache) { const y = window.scrollY; updateStats(); renderBatches(); if (usedCache) window.scrollTo(0, y); }
     const updatedNote = $("#dataUpdatedNote");
     if (updatedNote) updatedNote.textContent = `· library refreshed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;

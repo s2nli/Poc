@@ -31,6 +31,10 @@
     const tid=t.slug||t._id;
     await raw("/api/TopicInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(slug)+"&TopicId="+encodeURIComponent(tid)+"&ContentType=videos&page=1");
     await raw("/api/TopicInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(slug)+"&TopicId="+encodeURIComponent(tid)+"&ContentType=notes&page=1");
+    for (const ct of ["DppNotes","DppVideos"]) await raw("/api/TopicInfo?BatchId="+id+"&SubjectId="+encodeURIComponent(slug)+"&TopicId="+encodeURIComponent(tid)+"&ContentType="+ct+"&page=1");
+    await raw("/api/dpp-list?batchId="+id+"&batchSubjectId="+encodeURIComponent(s._id)+"&chapterId="+encodeURIComponent(t._id||"")+"&page=1&limit=20");
+    for (const ty of ["tests","test","announcement"]) await raw("/api/BatchInfo?BatchId="+id+"&Type="+ty);
+    try{ const r=await fetch("/api/todays-schedule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({batchId:id})}); show("POST /api/todays-schedule [HTTP "+r.status+"]",(await r.text()).slice(0,1500)); }catch(e){ show("todays-schedule","ERROR "+e.message); }
   };
   document.getElementById("copy").onclick=()=>{ navigator.clipboard.writeText(log).then(()=>alert("Copied")).catch(()=>alert("Copy failed")); };
 })();

@@ -17,7 +17,7 @@
 
   let batch = { name: "", by: "", about: "", img: "", lang: "" };
   let subjects = [];
-  let state = { tab: "lectures", s: null, t: null };
+  let state = { tab: "classes", s: null, t: null, c: "lectures" };
   let tok = 0, filterText = "", curItems = [];
 
   function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2200); }
@@ -30,23 +30,27 @@
   }
 
   /* ---------- state / history ---------- */
+  const TABS = [["tests", "📝 Tests"], ["classes", "🎁 All Classes"], ["live", "🔴 Live Classes"], ["ann", "📣 Announcement"]];
+  const CTABS = [["lectures", "Lectures"], ["dpps", "DPPs"], ["notes", "Notes"], ["dpppdf", "DPP PDFs"], ["dppvid", "DPP Videos"]];
   function readHash() {
-    const m = location.hash.match(/tab=(lectures|notes|about)(?:&s=(\d+))?(?:&t=(\d+))?/);
-    return { tab: m ? m[1] : "lectures", s: m && m[2] !== undefined ? +m[2] : null, t: m && m[3] !== undefined ? +m[3] : null };
+    const g = (k) => { const m = location.hash.match(new RegExp("[#&]" + k + "=([a-z0-9]+)", "i")); return m ? m[1] : null; };
+    const tab = TABS.some((x) => x[0] === g("tab")) ? g("tab") : "classes";
+    const c = CTABS.some((x) => x[0] === g("c")) ? g("c") : "lectures";
+    return { tab, s: g("s") !== null ? +g("s") : null, t: g("t") !== null ? +g("t") : null, c };
   }
-  const hashOf = (st) => "#tab=" + st.tab + (st.s !== null ? "&s=" + st.s : "") + (st.t !== null ? "&t=" + st.t : "");
-  function go(tab, s, t) {
-    state = { tab, s: s === undefined ? null : s, t: t === undefined ? null : t };
+  const hashOf = (st) => "#tab=" + st.tab + (st.s !== null ? "&s=" + st.s : "") + (st.t !== null ? "&t=" + st.t : "") + (st.t !== null ? "&c=" + st.c : "");
+  function go(tab, s, t, c) {
+    state = { tab, s: s === undefined ? null : s, t: t === undefined ? null : t, c: c || state.c || "lectures" };
     filterText = "";
     history.pushState(state, "", hashOf(state));
     render(); window.scrollTo(0, 0);
   }
   window.addEventListener("popstate", (e) => {
-    state = e.state && e.state.tab ? { tab: e.state.tab, s: e.state.s == null ? null : e.state.s, t: e.state.t == null ? null : e.state.t } : readHash();
+    state = e.state && e.state.tab ? Object.assign({ c: "lectures", s: null, t: null }, e.state) : readHash();
     filterText = ""; render();
   });
   $("#backBtn").addEventListener("click", () => {
-    if (state.s !== null) { history.back(); return; }
+    if (state.s !== null || state.tab !== "classes") { history.back(); return; }
     if (document.referrer && new URL(document.referrer).origin === location.origin && history.length > 1) history.back();
     else location.href = "index.html#courses";
   });
@@ -54,7 +58,7 @@
   /* ---------- init ---------- */
   function metaFromHome() {
     try {
-      const list = JSON.parse(sessionStorage.getItem("cx-batches-cache-v1") || "[]");
+      const list = JSON.parse(sessionStorage.getItem("cx-batches-cache-v2") || "[]");
       const b = list.find((x) => x._id === batchId);
       if (b) batch = { name: b.name || "", by: b.byName || "", about: "", img: b.previewImage || "", lang: b.language || "" };
     } catch (e) {}
@@ -87,26 +91,54 @@
 
   /* ---------- views ---------- */
   const subj = () => subjects[state.s];
-  const plural = (n, a, b) => n + " " + (n === 1 ? a : b);
+  const plural = (n, a, b) => (n || 0) + " " + (n === 1 ? a : b);
+
+  const lc = (it) => (it.title || "").toLowerCase();
+  const cname = () => (CTABS.find((x) => x[0] === state.c) || [0, ""])[1];
 
   async function render() {
     const my = ++tok;
     const page = $("#page");
-    if (state.tab === "about") { $("#topTitle").textContent = batch.name || "Batch"; page.innerHTML = heroHtml() + tabsHtml() + aboutHtml(); bindTabs(); return; }
-    if (state.s === null || !subjects[state.s]) { state.s = null; state.t = null; $("#topTitle").textContent = batch.name || "Batch"; page.innerHTML = heroHtml() + tabsHtml() + subjectsHtml(); bindTabs(); page.querySelectorAll("[data-s]").forEach((b) => b.addEventListener("click", () => go(state.tab, +b.dataset.s))); return; }
+    if (state.s !== null && state.tab !== "classes") { state.s = null; state.t = null; }
+    if (state.tab !== "classes" || state.s === null || !subjects[state.s]) {
+      state.s = null; state.t = null;
+      $("#topTitle").textContent = batch.name || "Batch";
+      page.innerHTML = heroHtml() + tabsHtml();
+      bindTabs();
+      const body = document.createElement("div"); page.appendChild(body);
+      if (state.tab === "classes") { body.innerHTML = subjectsHtml(); body.querySelectorAll("[data-s]").forEach((b) => b.addEventListener("click", () => go("classes", +b.dataset.s))); return; }
+      body.innerHTML = '<div class="list"><div class="skeleton"></div><div class="skeleton"></div></div>';
+      try {
+        if (state.tab === "tests") { const l = await PW.getTests(batchId); if (my === tok) { body.innerHTML = genericHtml(l, "No tests found."); bindGeneric(body, l, (it) => { location.href = PW.testUrl(batchId, it.id); }); } }
+        else if (state.tab === "live") { const l = await PW.getLive(batchId); if (my === tok) { body.innerHTML = liveHtml(l); bindGeneric(body, l, (it) => openVideo(it)); } }
+        else { const l = await PW.getAnnouncements(batchId); if (my === tok) body.innerHTML = annHtml(l); }
+      } catch (e) { if (my === tok) { console.error(e); body.innerHTML = '<div class="empty">Could not load this section.<div style="margin-top:12px"><button class="pill-btn solid" id="retry" type="button">Retry</button></div></div>'; const r = $("#retry"); if (r) r.addEventListener("click", render); } }
+      return;
+    }
     const s = subj();
     skeleton();
     let topics;
     try { topics = await PW.getChapters(batchId, s); } catch (e) { if (my === tok) fail("Chapters could not be loaded.", e); return; }
     if (my !== tok) return;
-    if (state.t === null || !topics[state.t]) { state.t = null; $("#topTitle").textContent = s.name; page.innerHTML = chaptersHtml(s, topics); page.querySelectorAll("[data-t]").forEach((b) => b.addEventListener("click", () => go(state.tab, state.s, +b.dataset.t))); return; }
+    if (state.t === null || !topics[state.t]) { state.t = null; $("#topTitle").textContent = s.name; page.innerHTML = chaptersHtml(s, topics); page.querySelectorAll("[data-t]").forEach((b) => b.addEventListener("click", () => go("classes", state.s, +b.dataset.t, "lectures"))); return; }
     const t = topics[state.t];
     $("#topTitle").textContent = t.name;
-    let items;
-    try { items = await PW.getItems(batchId, s, t, state.tab); } catch (e) { if (my === tok) fail("Content could not be loaded.", e); return; }
-    if (my !== tok) return;
-    page.innerHTML = itemsHtml(s, t, items);
-    bindItems(s, t, items);
+    page.innerHTML = '<p class="crumb">' + esc(batch.name) + " › " + esc(s.name) + " › " + esc(t.name) + "</p>" + ctabsHtml() + '<div id="cbody"><div class="list"><div class="skeleton"></div><div class="skeleton"></div></div></div>';
+    page.querySelectorAll("[data-c]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.c !== state.c) { state.c = b.dataset.c; history.replaceState(state, "", hashOf(state)); filterText = ""; render(); } }));
+    const body = $("#cbody");
+    try {
+      if (state.c === "dpps") {
+        const l = await PW.getDpps(batchId, s, t);
+        if (my !== tok) return;
+        body.innerHTML = genericHtml(l, "No DPPs found.");
+        bindGeneric(body, l, () => { location.href = pwChapterUrl(s, t); });
+      } else {
+        const items = await PW.getItems(batchId, s, t, state.c);
+        if (my !== tok) return;
+        body.innerHTML = (items.length > 10 ? '<input class="search" id="itemSearch" type="search" placeholder="Search…" autocomplete="off" value="' + esc(filterText) + '">' : "") + '<div class="list" id="itemList"></div>';
+        bindItems(s, t, items);
+      }
+    } catch (e) { if (my === tok) { console.error(e); body.innerHTML = '<div class="empty">Content could not be loaded.<div style="margin-top:12px"><button class="pill-btn solid" id="retry" type="button">Retry</button></div></div>'; const r = $("#retry"); if (r) r.addEventListener("click", render); } }
   }
 
   function heroHtml() {
@@ -116,35 +148,56 @@
       '<div class="badges"><span class="badge accent">PW</span>' + (batch.lang ? '<span class="badge">' + esc(batch.lang) + "</span>" : "") + "</div></div></div>";
   }
   function tabsHtml() {
-    return '<div class="tabs">' + ["lectures", "notes", "about"].map((t) => '<button class="tab' + (state.tab === t ? " active" : "") + '" data-tab="' + t + '" type="button">' + t[0].toUpperCase() + t.slice(1) + "</button>").join("") + "</div>";
+    return '<div class="tabs" style="overflow-x:auto;flex-wrap:nowrap">' + TABS.map((t) => '<button class="tab' + (state.tab === t[0] ? " active" : "") + '" data-tab="' + t[0] + '" type="button" style="white-space:nowrap">' + t[1] + "</button>").join("") +
+      '<button class="tab" id="shareBtn" type="button" style="white-space:nowrap">🔗 Share Batch</button></div>';
   }
-  function bindTabs() { document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => { if (b.dataset.tab !== state.tab) go(b.dataset.tab); })); }
+  function bindTabs() {
+    document.querySelectorAll(".tab[data-tab]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.tab !== state.tab) go(b.dataset.tab); }));
+    const sh = $("#shareBtn");
+    if (sh) sh.addEventListener("click", async () => {
+      const url = location.origin + "/batch.html?id=" + encodeURIComponent(batchId);
+      try { if (navigator.share) await navigator.share({ title: batch.name, url }); else { await navigator.clipboard.writeText(url); toast("Link copied"); } } catch (e) {}
+    });
+  }
+  function ctabsHtml() {
+    return '<div class="tabs" style="overflow-x:auto;flex-wrap:nowrap">' + CTABS.map((t) => '<button class="tab' + (state.c === t[0] ? " active" : "") + '" data-c="' + t[0] + '" type="button" style="white-space:nowrap">' + t[1] + "</button>").join("") + "</div>";
+  }
 
   function subjectsHtml() {
-    const notes = state.tab === "notes";
     if (!subjects.length) return '<div class="list"><div class="empty">Nothing here yet.</div></div>';
     return '<div class="list">' + subjects.map((s, i) => '<button class="row chapter" type="button" data-s="' + i + '"><span class="row-main"><span class="row-name">' + esc(s.name) + "</span>" +
-      '<span class="row-sub">' + (s.count && !notes ? plural(s.count, "Lecture", "Lectures") : notes ? "Notes" : "Lectures") + "</span></span>" + ICON.chev + "</button>").join("") + "</div>";
+      '<span class="row-sub">' + (s.count ? plural(s.count, "Lecture", "Lectures") : "Chapters") + "</span></span>" + ICON.chev + "</button>").join("") + "</div>";
   }
-  function pwLink(s) {
-    const href = "/study/batches/" + encodeURIComponent(batchId) + "/subjects/" + encodeURIComponent(s.slug) + "?batchSubjectId=" + encodeURIComponent(s.batchSubjectId) + "&subjectId=" + encodeURIComponent(s.subjectId);
-    return '<p style="margin:0 0 12px"><a class="pill-btn" href="' + esc(href) + '">DPPs, DPP PDFs, DPP Videos &amp; Tests ↗</a></p>';
+  function pwChapterUrl(s, t) {
+    return "/study/batches/" + encodeURIComponent(batchId) + "/subjects/" + encodeURIComponent(s.slug) + "/subject-topics/" + encodeURIComponent(t.slug) + "?batchSubjectId=" + encodeURIComponent(s.batchSubjectId) + "&subjectId=" + encodeURIComponent(s.subjectId) + "&chapterId=" + encodeURIComponent(t.id);
   }
   function chaptersHtml(s, topics) {
-    const notes = state.tab === "notes";
-    let h = '<p class="crumb">' + esc(batch.name) + " › " + (notes ? "Notes" : "Lectures") + " › " + esc(s.name) + "</p>" + pwLink(s);
+    let h = '<p class="crumb">' + esc(batch.name) + " › " + esc(s.name) + "</p>";
     return h + '<div class="list">' + (topics.length ? topics.map((t, i) => {
-      const sub = [t.videos ? plural(t.videos, "Lecture", "Lectures") : "", t.notes ? plural(t.notes, "Note", "Notes") : ""].filter(Boolean).join(" | ");
-      return '<button class="row chapter" type="button" data-t="' + i + '"><span class="row-main"><span class="row-name">' + esc(t.name) + "</span>" + (sub ? '<span class="row-sub">' + esc(sub) + "</span>" : "") + "</span>" + ICON.chev + "</button>";
+      const sub = [plural(t.videos, "Video", "Videos"), plural(t.exercises, "Exercise", "Exercises"), plural(t.notes, "Note", "Notes")].join(" | ");
+      return '<button class="row chapter" type="button" data-t="' + i + '"><span class="row-main"><span class="row-name">' + esc(t.name) + "</span>" + '<span class="row-sub">' + esc(sub) + "</span></span>" + ICON.chev + "</button>";
     }).join("") : '<div class="empty">No chapters found.</div>') + "</div>";
   }
 
-  function itemsHtml(s, t, items) {
-    const notes = state.tab === "notes";
-    let h = '<p class="crumb">' + esc(batch.name) + " › " + (notes ? "Notes" : "Lectures") + " › " + esc(s.name) + " › " + esc(t.name) + "</p>";
-    if (items.length > 10) h += '<input class="search" id="itemSearch" type="search" placeholder="Search in ' + esc(t.name) + '…" autocomplete="off" value="' + esc(filterText) + '">';
-    return h + '<div class="list" id="itemList"></div>';
+  function genericHtml(list, emptyMsg) {
+    if (!list.length) return '<div class="list"><div class="empty">' + esc(emptyMsg) + "</div></div>";
+    return '<div class="list">' + list.map((it, i) => '<button class="row chapter" type="button" data-g="' + i + '"><span class="row-main"><span class="row-name">' + esc(it.title) + "</span>" + (it.sub ? '<span class="row-sub">' + esc(it.sub) + "</span>" : "") + "</span>" + ICON.chev + "</button>").join("") + "</div>";
   }
+  function bindGeneric(root, list, fn) { root.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", () => fn(list[+b.dataset.g]))); }
+  function liveHtml(list) {
+    if (!list.length) return '<div class="list"><div class="empty">No live or scheduled classes today.</div></div>';
+    return '<div class="list">' + list.map((it, i) => '<button class="row chapter" type="button" data-g="' + i + '"><span class="row-main"><span class="row-name">' + (it.live ? "🔴 " : "") + esc(it.title) + "</span>" +
+      '<span class="row-sub">' + esc([PW.fmtDate(it.date), it.dur].filter(Boolean).join(" • ")) + "</span></span>" + ICON.chev + "</button>").join("") + "</div>";
+  }
+  function annHtml(list) {
+    if (!list.length) return '<div class="list"><div class="empty">No announcements.</div></div>';
+    return '<div class="list">' + list.map((a) => '<div class="about-card" style="margin-bottom:12px"><h3>' + esc(a.title || "Announcement") + "</h3>" + (a.body && a.body !== a.title ? "<p>" + esc(a.body) + "</p>" : "") + (a.date ? '<p style="opacity:.6;font-size:12px">' + esc(a.date) + "</p>" : "") + "</div>").join("") + "</div>";
+  }
+  function openVideo(it) {
+    if (!it.id) { toast("Class not available"); return; }
+    location.href = PW.watchUrl(batchId, it.subjectSlug || "", it.topicSlug || "", it);
+  }
+
   function itemRow(it, idx, n, notes) {
     if (notes) return '<div class="row item" data-n="' + n + '" role="button" tabindex="0"><span class="ico pdf" style="width:42px;height:42px;border-radius:13px">' + ICON.doc + '</span><span class="row-main"><span class="row-name">' + esc(it.title) + '</span></span><span class="act"><button class="pill-btn solid" data-act="view" type="button">View</button><button class="pill-btn" data-act="dl" type="button">Download</button></span></div>';
     const done = !!readDone()[lkey(it.id)];
@@ -159,14 +212,14 @@
   }
 
   function bindItems(s, t, items) {
-    const notes = state.tab === "notes";
+    const notes = state.c === "notes" || state.c === "dpppdf";
     const list = $("#itemList");
     const draw = () => {
       const q = filterText.trim().toLowerCase();
       const rows = [];
-      items.forEach((it, idx) => { if (!q || it.title.toLowerCase().includes(q)) rows.push([it, idx]); });
+      items.forEach((it, idx) => { if (!q || lc(it).includes(q)) rows.push([it, idx]); });
       curItems = rows.map((r) => r[0]);
-      list.innerHTML = rows.length ? rows.map(([it, idx], n) => itemRow(it, idx, n, notes)).join("") : '<div class="empty">No results found.</div>';
+      list.innerHTML = rows.length ? rows.map(([it, idx], n) => itemRow(it, idx, n, notes)).join("") : '<div class="empty">' + (items.length ? "No results found." : "Nothing here yet.") + "</div>";
       const open = async (el, act) => {
         const it = curItems[+el.dataset.n];
         if (!it) return;
@@ -193,13 +246,6 @@
     const search = $("#itemSearch");
     if (search) search.addEventListener("input", () => { filterText = search.value; draw(); });
     draw();
-  }
-
-  function aboutHtml() {
-    return '<div class="stats" style="grid-template-columns:repeat(2,1fr)"><div class="stat"><b>' + subjects.length + '</b><span>Subjects</span></div><div class="stat"><b>' + subjects.reduce((n, s) => n + (s.count || 0), 0) + "</b><span>Lectures</span></div></div>" +
-      '<div class="about-card"><h3>About this batch</h3><p>' + esc(batch.about || batch.name) + "</p></div>" +
-      '<div class="about-card" style="margin-top:14px"><h3>Subjects</h3><div class="tags">' + subjects.map((s) => '<span class="tag">' + esc(s.name) + "</span>").join("") + "</div></div>" +
-      '<p style="margin-top:14px"><a class="pill-btn solid" href="/study/batches/' + encodeURIComponent(batchId) + '">Open full batch on PW (DPPs &amp; Tests) ↗</a></p>';
   }
 
   init();
